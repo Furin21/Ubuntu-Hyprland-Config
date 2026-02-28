@@ -57,7 +57,6 @@
 "hyprland/workspaces#pacman": {
 	"active-only": false,
 	"all-outputs": true,
-	"format": "{icon}",
 	"on-click": "activate",
 	"on-scroll-up": "hyprctl dispatch workspace e+1",
 	"on-scroll-down": "hyprctl dispatch workspace e-1",
@@ -102,9 +101,9 @@
 },
 //  NUMBERS and ICONS style
 "hyprland/workspaces#4": {
-	"format": "{name}",
 	"format": " {name} {icon} ",
 	//"format": " {icon} ",
+	//"format": "{name}",
 	"show-special": false,
 	"on-click": "activate",
 	"on-scroll-up": "hyprctl dispatch workspace e+1",
@@ -629,13 +628,13 @@
 	"on-click-right": "swaync-client -d -sw",
 	"escape": true,
 },
-// NOTE:! This is only for Arch and Arch Based Distros  depend: pacman-contrib
+// Ubuntu apt package updater
 "custom/updater": {
 	"format": " {}",
-	"exec": "checkupdates | wc -l",
-	"exec-if": "[[ $(checkupdates | wc -l) ]]",
-	"interval": 15,
-	"on-click": "kitty -T update paru -Syu || yay -Syu && notify-send 'The system has been updated'",
+	"exec": "apt list --upgradable 2>/dev/null | tail -n +2 | wc -l",
+	"exec-if": "apt list --upgradable 2>/dev/null | grep -q upgradable",
+	"interval": 1800,
+	"on-click": "kitty -T update sh -c 'sudo apt update && sudo apt upgrade && notify-send \"System updated\"'",
 },
 "custom/weather": {
 	"format": "{}",
@@ -643,7 +642,6 @@
 	"format-alt-click": "click",
 	"interval": 3600,
 	"return-type": "json",
-	"exec": "~/.config/hypr/UserScripts/Weather.sh",
 	"exec": "~/.config/hypr/UserScripts/Weather.py",
 	"exec-if": "ping wttr.in -c1",
 	"tooltip": true,

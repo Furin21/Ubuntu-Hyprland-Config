@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor backups
+*.save
+*~
+*.swp
+*.swo
+
+# Temp files
+*.tmp
+*.bak
