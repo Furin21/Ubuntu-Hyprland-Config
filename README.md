@@ -1,6 +1,8 @@
-# Furin21 · Hyprland Ubuntu 24.04 Dotfiles
+# Furin21 · Hyprland Dotfiles
 
-A complete, ready-to-run Hyprland desktop configuration for **Ubuntu 24.04 LTS**, updated for **Hyprland 0.53+** syntax.
+A complete, ready-to-run Hyprland desktop configuration updated for **Hyprland 0.53+** syntax.
+
+**Supported distros:** Ubuntu 24.04 LTS · Fedora 39/40/41
 
 ## One-Line Install
 

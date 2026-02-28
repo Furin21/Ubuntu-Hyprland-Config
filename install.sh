@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ================================================================
-#  Furin21 · Hyprland Ubuntu 24.04 · One-Line Installer
+#  Furin21 · Hyprland · One-Line Installer
+#  Supports: Ubuntu 24.04 LTS · Fedora 39/40/41
 # ================================================================
 #  bash <(curl -sL https://raw.githubusercontent.com/Furin21/Ubuntu-Hyprland-Config/main/install.sh)
 # ================================================================
@@ -9,7 +10,6 @@ set -euo pipefail
 IFS=$'\n\t'
 
 REPO_URL="https://github.com/Furin21/Ubuntu-Hyprland-Config"
-REPO_RAW="https://raw.githubusercontent.com/Furin21/Ubuntu-Hyprland-Config/main"
 CONFIG_DEST="$HOME/.config"
 TMP_DIR="$(mktemp -d /tmp/hypr-install-XXXXXX)"
 
@@ -22,6 +22,29 @@ warn()    { echo -e "${YLW}  !${NC} $*"; }
 die()     { echo -e "${RED}  ✗ FATAL:${NC} $*"; exit 1; }
 section() { echo -e "\n${BOLD}${BLU}── $* ──${NC}"; }
 
+# ── Distro detection ──────────────────────────────────────────────
+DISTRO=""
+detect_distro() {
+    . /etc/os-release 2>/dev/null || true
+    case "${ID:-}" in
+        ubuntu)  DISTRO="ubuntu" ;;
+        fedora)  DISTRO="fedora" ;;
+        *)
+            warn "Unrecognised distro '${ID:-unknown}'. Attempting Ubuntu-style install."
+            DISTRO="ubuntu"
+            ;;
+    esac
+}
+
+# ── Generic package installer ─────────────────────────────────────
+pkg_install() {
+    # Install a package; warn but don't exit on failure
+    case "$DISTRO" in
+        ubuntu) sudo apt-get install -y "$1" 2>/dev/null && ok "$1" || warn "apt: could not install $1 (skipping)" ;;
+        fedora) sudo dnf install -y "$1" 2>/dev/null && ok "$1" || warn "dnf: could not install $1 (skipping)" ;;
+    esac
+}
+
 # ── Helpers ───────────────────────────────────────────────────────
 gh_latest() {
     # Returns the latest tag for a GitHub repo (e.g. "v1.2.3")
@@ -29,109 +52,140 @@ gh_latest() {
         | grep -i '^location:' | awk -F/ '{print $NF}' | tr -d '[:space:]\r'
 }
 
-apt_try() {
-    # Install a package; warn but don't exit on failure
-    sudo apt-get install -y "$1" 2>/dev/null && ok "$1" || warn "apt: could not install $1 (skipping)"
-}
-
 # ── 0. Sanity checks ──────────────────────────────────────────────
 check_system() {
     section "System check"
     [[ "$(id -u)" -eq 0 ]] && die "Run as your normal user, not root. (sudo will be called internally)"
-    command -v sudo >/dev/null     || die "sudo is required."
-    command -v curl >/dev/null     || die "curl is required. Install with: sudo apt install curl"
-    command -v git  >/dev/null     || sudo apt-get install -y git
+    command -v sudo >/dev/null || die "sudo is required."
+    command -v curl >/dev/null || die "curl is required. Install it first: sudo apt install curl  OR  sudo dnf install curl"
+
+    detect_distro
+
+    # Ensure git is available
+    if ! command -v git &>/dev/null; then
+        info "Installing git …"
+        case "$DISTRO" in
+            ubuntu) sudo apt-get install -y git ;;
+            fedora) sudo dnf install -y git ;;
+        esac
+    fi
+
+    # Version warnings
     . /etc/os-release 2>/dev/null || true
-    [[ "${ID:-}" != "ubuntu" ]]        && warn "Not Ubuntu — may need manual adjustments."
-    [[ "${VERSION_ID:-}" != "24.04" ]] && warn "Designed for Ubuntu 24.04; got ${VERSION_ID:-unknown}."
-    ok "Running as $USER on ${PRETTY_NAME:-Linux}"
+    case "$DISTRO" in
+        ubuntu)
+            [[ "${VERSION_ID:-}" != "24.04" ]] && warn "Designed for Ubuntu 24.04; got ${VERSION_ID:-unknown}. Proceeding anyway."
+            ;;
+        fedora)
+            local fver="${VERSION_ID:-0}"
+            [[ "$fver" -lt 39 ]] && warn "Designed for Fedora 39+; got Fedora ${fver}. Proceeding anyway."
+            ;;
+    esac
+
+    ok "Running as $USER on ${PRETTY_NAME:-Linux} [distro=$DISTRO]"
 }
 
-# ── 1. Hyprland + ecosystem via apt/PPA ───────────────────────────
-install_hyprland_apt() {
-    section "Hyprland & Wayland stack (apt)"
+# ── 1. Hyprland + ecosystem ───────────────────────────────────────
+install_hyprland() {
+    local core_pkgs=(hyprland hyprlock hypridle xdg-desktop-portal-hyprland xdg-desktop-portal-gtk)
 
-    # Enable Universe repo
-    sudo add-apt-repository -y universe 2>/dev/null || true
+    case "$DISTRO" in
+        ubuntu)
+            section "Hyprland & Wayland stack (apt + PPA)"
+            sudo add-apt-repository -y universe 2>/dev/null || true
 
-    # Try known PPAs for latest Hyprland on Ubuntu Noble
-    local ppa_ok=0
-    for ppa in "hyprwm/hyprland" "solopasha/hyprland"; do
-        info "Trying ppa:$ppa …"
-        if sudo add-apt-repository -y "ppa:$ppa" 2>/dev/null; then
-            ok "Added ppa:$ppa"
-            ppa_ok=1
-            break
-        fi
-    done
-    [[ $ppa_ok -eq 0 ]] && warn "No Hyprland PPA succeeded. Installing from Ubuntu universe (may be older)."
+            local ppa_ok=0
+            for ppa in "hyprwm/hyprland" "solopasha/hyprland"; do
+                info "Trying ppa:$ppa …"
+                if sudo add-apt-repository -y "ppa:$ppa" 2>/dev/null; then
+                    ok "Added ppa:$ppa"
+                    ppa_ok=1
+                    break
+                fi
+            done
+            [[ $ppa_ok -eq 0 ]] && warn "No Hyprland PPA succeeded — installing from Ubuntu universe (may be older)."
 
-    sudo apt-get update -qq
+            sudo apt-get update -qq
+            for pkg in "${core_pkgs[@]}"; do pkg_install "$pkg"; done
+            ;;
 
-    # Core Hyprland suite
-    for pkg in hyprland hyprlock hypridle xdg-desktop-portal-hyprland xdg-desktop-portal-gtk; do
-        apt_try "$pkg"
-    done
+        fedora)
+            section "Hyprland & Wayland stack (dnf + COPR)"
+            info "Enabling solopasha/hyprland COPR …"
+            sudo dnf copr enable -y solopasha/hyprland 2>/dev/null \
+                || warn "COPR enable failed — Hyprland may be older from Fedora repos."
+
+            sudo dnf update -y -q
+            for pkg in "${core_pkgs[@]}"; do pkg_install "$pkg"; done
+            ;;
+    esac
 }
 
-# ── 2. All other apt dependencies ────────────────────────────────
-install_apt_deps() {
-    section "Dependencies (apt)"
+# ── 2. All other dependencies ─────────────────────────────────────
+install_deps() {
+    case "$DISTRO" in
+        ubuntu)
+            section "Dependencies (apt)"
+            local pkgs=(
+                waybar
+                libdrm-dev libgbm-dev
+                swaync libnotify-bin
+                kitty nautilus
+                grim slurp swappy
+                wl-clipboard
+                pipewire wireplumber pipewire-pulse pipewire-alsa
+                pavucontrol pamixer
+                playerctl brightnessctl
+                network-manager-gnome blueman
+                rofi
+                jq yad wlogout xdotool
+                nwg-look gnome-themes-extra
+                qt5ct qt6ct
+                policykit-1-gnome
+                fonts-jetbrains-mono fonts-inter
+                python3-pip python3-pipx
+                build-essential cmake meson ninja-build
+                cargo rustup
+                wget curl unzip tar
+            )
+            sudo apt-get update -qq
+            for pkg in "${pkgs[@]}"; do pkg_install "$pkg"; done
+            ;;
 
-    local pkgs=(
-        # Wayland / display
-        waybar
-        libdrm-dev libgbm-dev
+        fedora)
+            section "Dependencies (dnf)"
+            # Some packages live in extra repos
+            info "Enabling RPM Fusion (free) …"
+            sudo dnf install -y -q \
+                "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
+                2>/dev/null || warn "RPM Fusion enable failed — some packages may be missing."
 
-        # Notifications
-        swaync libnotify-bin
-
-        # Terminal & files
-        kitty nautilus
-
-        # Screenshots
-        grim slurp swappy
-
-        # Clipboard
-        wl-clipboard
-
-        # Audio / volume
-        pipewire wireplumber pipewire-pulse pipewire-alsa
-        pavucontrol pamixer
-
-        # Media / brightness
-        playerctl brightnessctl
-
-        # Networking / Bluetooth
-        network-manager-gnome blueman
-
-        # App launcher
-        rofi
-
-        # Utilities used by scripts
-        jq yad wlogout xdotool
-
-        # Theming
-        nwg-look gnome-themes-extra
-        qt5ct qt6ct
-
-        # Polkit authentication agent
-        policykit-1-gnome
-
-        # Fonts
-        fonts-jetbrains-mono fonts-inter
-
-        # Build & runtime tools (for cargo / pip installs below)
-        python3-pip python3-pipx
-        build-essential cmake meson ninja-build
-        cargo rustup
-        wget curl unzip tar
-    )
-
-    sudo apt-get update -qq
-    for pkg in "${pkgs[@]}"; do
-        apt_try "$pkg"
-    done
+            local pkgs=(
+                waybar
+                libdrm-devel mesa-libgbm-devel
+                swaynotificationcenter libnotify
+                kitty nautilus
+                grim slurp swappy
+                wl-clipboard
+                pipewire wireplumber pipewire-pulseaudio pipewire-alsa
+                pavucontrol pamixer
+                playerctl brightnessctl
+                NetworkManager-gnome blueman
+                rofi-wayland
+                jq yad wlogout xdotool
+                nwg-look gnome-themes-extra
+                qt5ct qt6ct
+                polkit-gnome
+                jetbrains-mono-fonts
+                python3-pip pipx
+                gcc gcc-c++ make cmake meson ninja-build
+                cargo rust
+                wget curl unzip tar
+            )
+            sudo dnf update -y -q
+            for pkg in "${pkgs[@]}"; do pkg_install "$pkg"; done
+            ;;
+    esac
 }
 
 # ── 3. swww (wallpaper daemon) ────────────────────────────────────
@@ -172,7 +226,6 @@ install_wallust() {
     if command -v wallust &>/dev/null; then
         ok "wallust already installed"; return
     fi
-    # Ensure cargo is available (prefer rustup over distro cargo)
     if ! command -v cargo &>/dev/null; then
         info "Installing Rust toolchain via rustup …"
         curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
@@ -180,7 +233,6 @@ install_wallust() {
         source "$HOME/.cargo/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
     fi
     cargo install wallust 2>&1 | tail -3
-    # Persist ~/.cargo/bin in PATH
     local line='export PATH="$HOME/.cargo/bin:$PATH"'
     for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
         [[ -f "$rc" ]] && grep -q 'cargo/bin' "$rc" || echo "$line" >> "$rc"
@@ -218,7 +270,7 @@ install_fonts() {
         info "Downloading $font Nerd Font ${tag} …"
         wget -qO "$TMP_DIR/${font}.tar.xz" \
             "https://github.com/ryanoasis/nerd-fonts/releases/download/${tag}/${font}.tar.xz" \
-            || { warn "Failed to download $font — falling back to apt fonts-jetbrains-mono"; continue; }
+            || { warn "Failed to download $font Nerd Font — skipping"; continue; }
         tar -xf "$TMP_DIR/${font}.tar.xz" -C "$font_dir" --wildcards '*.ttf' 2>/dev/null || true
         ok "$font Nerd Font installed"
     done
@@ -232,46 +284,38 @@ install_configs() {
     info "Cloning $REPO_URL …"
     git clone --depth 1 "$REPO_URL" "$TMP_DIR/dots"
 
-    # Directories to install
     local dirs=(hypr waybar kitty wlogout wallust)
     for d in "${dirs[@]}"; do
         mkdir -p "$CONFIG_DEST/$d"
-        # Merge into existing config dir, not overwrite
         cp -a "$TMP_DIR/dots/$d/." "$CONFIG_DEST/$d/"
         ok "~/.config/$d"
     done
 
-    # Wallpaper directory (scripts expect this path)
     mkdir -p "$HOME/Pictures/wallpapers"
     ok "~/Pictures/wallpapers created"
 
-    # Default waybar config & style (symlinks so WaybarLayout/WaybarStyles still work)
     ln -sf "$CONFIG_DEST/waybar/configs/[TOP] Default Laptop" "$CONFIG_DEST/waybar/config"
     ln -sf "$CONFIG_DEST/waybar/style/[Colored] Chroma Glow.css" "$CONFIG_DEST/waybar/style.css"
     ok "Default waybar layout & style linked"
 
-    # Mark all scripts executable
     find "$CONFIG_DEST/hypr" -name '*.sh' -exec chmod +x {} +
     chmod +x "$CONFIG_DEST/hypr/initial-boot.sh"
     ok "Scripts marked executable"
 
-    # Directories scripts expect but aren't in the repo
     mkdir -p "$CONFIG_DEST/rofi"
     mkdir -p "$CONFIG_DEST/swaync/icons" "$CONFIG_DEST/swaync/images"
     mkdir -p "$CONFIG_DEST/wallust/templates"
 
-    # Remove the one-time boot marker so initial-boot.sh fires on first Hyprland start
     rm -f "$CONFIG_DEST/hypr/.initial_startup_done"
     ok "Dotfiles installed"
 }
 
-# ── 9. swaync icons (scripts need them for notifications) ─────────
+# ── 9. swaync icons ───────────────────────────────────────────────
 install_swaync_icons() {
     section "swaync notification icons"
     local icon_dir="$CONFIG_DEST/swaync/icons"
     local img_dir="$CONFIG_DEST/swaync/images"
     mkdir -p "$icon_dir" "$img_dir"
-    # Install a minimal set of notification icons from the system
     for icon in audio-volume-high audio-volume-medium audio-volume-low \
                 audio-volume-muted microphone-sensitivity-high \
                 microphone-sensitivity-muted display-brightness-symbolic \
@@ -279,7 +323,6 @@ install_swaync_icons() {
         local src; src=$(find /usr/share/icons -name "${icon}.png" -path "*/48x48/*" 2>/dev/null | head -1)
         [[ -n "$src" ]] && cp "$src" "$icon_dir/" 2>/dev/null || true
     done
-    # Fallback: copy generic bell icon for script notifications
     local bell_src; bell_src=$(find /usr/share/icons -name "bell*.png" 2>/dev/null | head -1)
     [[ -n "$bell_src" ]] && cp "$bell_src" "$img_dir/bell.png" 2>/dev/null || true
     ok "swaync icon dir ready"
@@ -320,18 +363,18 @@ main() {
     echo -e "${BOLD}${BLU}"
     cat <<'BANNER'
   ╔══════════════════════════════════════════════════╗
-  ║   Hyprland · Ubuntu 24.04 · Furin21 Dotfiles    ║
-  ║   github.com/Furin21/Ubuntu-Hyprland-Config     ║
+  ║       Hyprland · Furin21 Dotfiles                ║
+  ║   Ubuntu 24.04 · Fedora 39/40/41                 ║
+  ║   github.com/Furin21/Ubuntu-Hyprland-Config      ║
   ╚══════════════════════════════════════════════════╝
 BANNER
     echo -e "${NC}"
 
-    # Cleanup on exit
     trap 'rm -rf "$TMP_DIR"' EXIT
 
     check_system
-    install_hyprland_apt
-    install_apt_deps
+    install_hyprland
+    install_deps
     install_swww
     install_cliphist
     install_wallust
